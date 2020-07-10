@@ -118,7 +118,7 @@ export class ShareLink extends PureComponent<Props, State> {
               <div className="gf-form-group">
                 <div className="gf-form-inline">
                   <div className="gf-form gf-form--grow">
-                    <input type="text" className="gf-form-input" defaultValue={shareUrl} />
+                    <input type="text" className="gf-form-input gf-form-input--no-ellipsis " defaultValue={shareUrl} />
                   </div>
                   <div className="gf-form">
                     <ClipboardButton variant="primary" getText={this.getShareUrl} onClipboardCopy={this.onShareUrlCopy}>
