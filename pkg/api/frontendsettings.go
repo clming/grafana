@@ -42,106 +42,30 @@ func (hs *HTTPServer) getFrontendSettingsMap(c *models.ReqContext) (map[string]i
 		}
 	}
 
-	datasources := make(map[string]interface{})
-	var defaultDatasource string
-
 	enabledPlugins, err := plugins.GetEnabledPlugins(c.OrgId)
 	if err != nil {
 		return nil, err
 	}
 
 	pluginsToPreload := []string{}
-
 	for _, app := range enabledPlugins.Apps {
 		if app.Preload {
 			pluginsToPreload = append(pluginsToPreload, app.Module)
 		}
 	}
 
-	for _, ds := range orgDataSources {
-		url := ds.Url
-
-		if ds.Access == models.DS_ACCESS_PROXY {
-			url = "/api/datasources/proxy/" + strconv.FormatInt(ds.Id, 10)
-		}
-
-		var dsMap = map[string]interface{}{
-			"id":   ds.Id,
-			"uid":  ds.Uid,
-			"type": ds.Type,
-			"name": ds.Name,
-			"url":  url,
-		}
-
-		meta, exists := enabledPlugins.DataSources[ds.Type]
-		if !exists {
-			log.Error(3, "Could not find plugin definition for data source: %v", ds.Type)
-			continue
-		}
-
-		if meta.Preload {
-			pluginsToPreload = append(pluginsToPreload, meta.Module)
-		}
-
-		dsMap["meta"] = meta
-
-		if ds.IsDefault {
-			defaultDatasource = ds.Name
-		}
-
-		jsonData := ds.JsonData
-		if jsonData == nil {
-			jsonData = simplejson.New()
-		}
-
-		dsMap["jsonData"] = jsonData
-
-		if ds.Access == models.DS_ACCESS_DIRECT {
-			if ds.BasicAuth {
-				dsMap["basicAuth"] = util.GetBasicAuthHeader(ds.BasicAuthUser, ds.DecryptedBasicAuthPassword())
-			}
-			if ds.WithCredentials {
-				dsMap["withCredentials"] = ds.WithCredentials
-			}
-
-			if ds.Type == models.DS_INFLUXDB_08 {
-				dsMap["username"] = ds.User
-				dsMap["password"] = ds.DecryptedPassword()
-				dsMap["url"] = url + "/db/" + ds.Database
-			}
-
-			if ds.Type == models.DS_INFLUXDB {
-				dsMap["username"] = ds.User
-				dsMap["password"] = ds.DecryptedPassword()
-				dsMap["url"] = url
-			}
-		}
-
-		if (ds.Type == models.DS_INFLUXDB) || (ds.Type == models.DS_ES) {
-			dsMap["database"] = ds.Database
-		}
-
-		if ds.Type == models.DS_PROMETHEUS {
-			// add unproxied server URL for link to Prometheus web UI
-			jsonData.Set("directUrl", ds.Url)
-		}
-
-		datasources[ds.Name] = dsMap
-	}
+	pluginsToPreload, defaultDatasource, dataSources := processDataSources(orgDataSources, enabledPlugins,
+		pluginsToPreload)
 
 	// add datasources that are built in (meaning they are not added via data sources page, nor have any entry in datasource table)
 	for _, ds := range plugins.DataSources {
 		if ds.BuiltIn {
-			datasources[ds.Name] = map[string]interface{}{
+			dataSources[ds.Name] = map[string]interface{}{
 				"type": ds.Type,
 				"name": ds.Name,
 				"meta": plugins.DataSources[ds.Id],
 			}
 		}
-	}
-
-	if defaultDatasource == "" {
-		defaultDatasource = "-- Grafana --"
 	}
 
 	panels := map[string]interface{}{}
@@ -180,7 +104,7 @@ func (hs *HTTPServer) getFrontendSettingsMap(c *models.ReqContext) (map[string]i
 
 	jsonObj := map[string]interface{}{
 		"defaultDatasource":          defaultDatasource,
-		"datasources":                datasources,
+		"datasources":                dataSources,
 		"minRefreshInterval":         setting.MinRefreshInterval,
 		"panels":                     panels,
 		"appUrl":                     setting.AppUrl,
@@ -258,6 +182,87 @@ func getPanelSort(id string) int {
 		sort = 10
 	}
 	return sort
+}
+
+func processDataSources(orgDataSources []*models.DataSource, enabledPlugins *plugins.EnabledPlugins,
+	pluginsToPreload []string) ([]string, string, map[string]map[string]interface{}) {
+	dataSources := make(map[string]map[string]interface{})
+	var defaultDS string
+	for _, ds := range orgDataSources {
+		url := ds.Url
+
+		if ds.Access == models.DS_ACCESS_PROXY {
+			url = "/api/datasources/proxy/" + strconv.FormatInt(ds.Id, 10)
+		}
+
+		var dsMap = map[string]interface{}{
+			"id":   ds.Id,
+			"uid":  ds.Uid,
+			"type": ds.Type,
+			"name": ds.Name,
+			"url":  url,
+		}
+
+		meta, exists := enabledPlugins.DataSources[ds.Type]
+		if !exists {
+			log.Error(3, "Could not find plugin definition for data source: %v", ds.Type)
+			return nil, "", nil
+		}
+
+		if meta.Preload {
+			pluginsToPreload = append(pluginsToPreload, meta.Module)
+		}
+
+		dsMap["meta"] = meta
+
+		jsonData := ds.JsonData
+		if jsonData == nil {
+			jsonData = simplejson.New()
+		}
+
+		dsMap["jsonData"] = jsonData
+
+		if ds.Access == models.DS_ACCESS_DIRECT {
+			if ds.BasicAuth {
+				dsMap["basicAuth"] = util.GetBasicAuthHeader(ds.BasicAuthUser, ds.DecryptedBasicAuthPassword())
+			}
+			if ds.WithCredentials {
+				dsMap["withCredentials"] = ds.WithCredentials
+			}
+
+			if ds.Type == models.DS_INFLUXDB_08 {
+				dsMap["username"] = ds.User
+				dsMap["password"] = ds.DecryptedPassword()
+				dsMap["url"] = url + "/db/" + ds.Database
+			}
+
+			if ds.Type == models.DS_INFLUXDB {
+				dsMap["username"] = ds.User
+				dsMap["password"] = ds.DecryptedPassword()
+				dsMap["url"] = url
+			}
+		}
+
+		if (ds.Type == models.DS_INFLUXDB) || (ds.Type == models.DS_ES) {
+			dsMap["database"] = ds.Database
+		}
+
+		if ds.Type == models.DS_PROMETHEUS {
+			// add unproxied server URL for link to Prometheus web UI
+			jsonData.Set("directUrl", ds.Url)
+		}
+
+		dataSources[ds.Name] = dsMap
+		if ds.IsDefault {
+			defaultDS = ds.Name
+		}
+	}
+
+	if defaultDS == "" {
+		defaultDS = "-- Grafana --"
+	}
+
+	return pluginsToPreload, defaultDS, dataSources
 }
 
 func (hs *HTTPServer) GetFrontendSettings(c *models.ReqContext) {
